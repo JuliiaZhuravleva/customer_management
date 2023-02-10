@@ -1,4 +1,5 @@
 import psycopg2
+from psycopg2 import sql
 
 
 class MyDatabase:
@@ -112,52 +113,46 @@ class MyDatabase:
         self.conn.commit()
 
     def change_client_info(self, client_id, first_name=None, last_name=None, email=None):
-        new_attributes = {'client_id': client_id}
-        set_list = 'SET '
+        set_list = {}
 
         if first_name:
-            new_attributes['first_name'] = first_name
-            set_list += 'first_name = %(first_name)s'
+            set_list['first_name'] = first_name
         if last_name:
-            new_attributes['last_name'] = last_name
-            if set_list[-1] == 's':
-                set_list += ', '
-            set_list += 'last_name = %(last_name)s'
+            set_list['last_name'] = last_name
         if email:
-            new_attributes['email'] = email
-            if set_list[-1] == 's':
-                set_list += ', '
-            set_list += 'email = %(email)s'
-        sql_update = 'UPDATE clients ' + set_list + ' WHERE id = %(client_id)s;'
+            set_list['email'] = email
 
-        self.query(sql_update, new_attributes)
+        sql_update = sql.SQL("""
+                UPDATE clients SET {set_list} WHERE id = {client_id};
+                """.format(
+            set_list=(', '.join([f"{key} = '{set_list[key]}'" for key in set_list])),
+            client_id=str(client_id)
+        ))
+        params = tuple(set_list.values())
+
+        self.query(sql_update, params)
         self.conn.commit()
 
     def get_client_id(self, first_name=None, last_name=None, email=None, phone=None):
         client_info = {}
-        where_condition = ' WHERE 1=1'
+
         if first_name:
-            client_info['first_name'] = first_name
-            where_condition += ' AND first_name = %(first_name)s'
+            client_info['c.first_name'] = first_name
         if last_name:
-            client_info['last_name'] = last_name
-            where_condition += ' AND last_name = %(last_name)s'
+            client_info['c.last_name'] = last_name
         if email:
-            client_info['email'] = email
-            where_condition += ' AND email = %(email)s'
-
-        client_ids_from_clients = self.query('SELECT id FROM clients' + where_condition, client_info, return_values=True)
-
+            client_info['c.email'] = email
         if phone:
-            client_ids_from_phones = {self.query(
-                'SELECT client_id FROM phones WHERE phone = %(phone)s',
-                {'phone': phone},
-                return_value=True), }
-            client_ids_from_clients = set(client_ids_from_clients) & client_ids_from_phones
+            join = 'JOIN phones p on p.client_id = c.id'
+            client_info['p.phone'] = phone
+        else:
+            join = ''
 
-        client_ids = []
-            
-        for client_id in client_ids_from_clients:
-            client_ids.append(int(client_id[0]))
+        find_query = 'SELECT c.id FROM clients c {join} {condition};'.format(
+            condition='WHERE ' + ('and '.join([f"{key} = %({key})s" for key in client_info])),
+            join=join
+        )
 
-        return client_ids
+        client_id = self.query(find_query, client_info, return_value=True)
+
+        return client_id
