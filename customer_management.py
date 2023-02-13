@@ -6,6 +6,7 @@ class MyDatabase:
     def __init__(self, db, user, password):
         self.conn = psycopg2.connect(database=db, user=user, password=password)
         self.cur = self.conn.cursor()
+        self.user_attr = {'required': ['first_name', 'last_name', 'email'], 'optional': ['phone']}
 
     def query(self, query, params=None, return_value=False, return_values=False):
         if params:
@@ -56,25 +57,25 @@ class MyDatabase:
         self.query(sql)
         self.conn.commit()
 
-    def add_client(self, first_name, last_name, email, phones=None):
+    def add_client(self, attrs):
         sql_insert_client = '''
         INSERT INTO clients (first_name, last_name, email) 
         values (%(first_name)s, %(last_name)s, %(email)s)
         RETURNING id;
         '''
-        client_info = {
-            'first_name': first_name,
-            'last_name': last_name,
-            'email': email
-        }
+        client_info = {}
+        for attr in self.user_attr['required']:
+            if attr not in attrs:
+                return f'Не хватает необходимого атрибута {attr}'
+            client_info[attr] = attrs[attr]
 
         client_id = self.query(sql_insert_client, client_info, return_value=True)
         self.conn.commit()
 
-        if phones:
-            for phone in phones:
-                self.add_phone(client_id, phone)
-            self.conn.commit()
+        for attr in self.user_attr['optional']:
+            if attr == 'phone' and attr in attrs:
+                self.add_phone(client_id, attrs[attr])
+                self.conn.commit()
 
         return client_id
 
@@ -112,15 +113,12 @@ class MyDatabase:
         self.query(sql_delete_phone, params)
         self.conn.commit()
 
-    def change_client_info(self, client_id, first_name=None, last_name=None, email=None):
+    def change_client_info(self, client_id, attrs):
         set_list = {}
 
-        if first_name:
-            set_list['first_name'] = first_name
-        if last_name:
-            set_list['last_name'] = last_name
-        if email:
-            set_list['email'] = email
+        for attr in self.user_attr['required']:
+            if attr in attrs:
+                set_list[attr] = attrs[attr]
 
         sql_update = sql.SQL("""
                 UPDATE clients SET {set_list} WHERE id = {client_id};
@@ -133,20 +131,18 @@ class MyDatabase:
         self.query(sql_update, params)
         self.conn.commit()
 
-    def get_client_id(self, first_name=None, last_name=None, email=None, phone=None):
+    def get_client_id(self, attrs):
         client_info = {}
+        join = ''
 
-        if first_name:
-            client_info['c.first_name'] = first_name
-        if last_name:
-            client_info['c.last_name'] = last_name
-        if email:
-            client_info['c.email'] = email
-        if phone:
-            join = 'JOIN phones p on p.client_id = c.id'
-            client_info['p.phone'] = phone
-        else:
-            join = ''
+        for attr in self.user_attr['required']:
+            if attr in attrs:
+                client_info[f'c.{attr}'] = attrs[attr]
+
+        for attr in self.user_attr['optional']:
+            if attr == 'phone' and attr in attrs:
+                join = 'JOIN phones p on p.client_id = c.id'
+                client_info['p.phone'] = attrs[attr]
 
         find_query = 'SELECT c.id FROM clients c {join} {condition};'.format(
             condition='WHERE ' + ('and '.join([f"{key} = %({key})s" for key in client_info])),
